@@ -33,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // Fetch history from Database
   Future<void> _loadHistory() async {
     try {
       final data = await DatabaseHelper().getScanHistory();
@@ -173,6 +174,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             horizontal: 16,
                             vertical: 8,
                           ),
+
+                          // Left Side: Image
                           leading: Container(
                             width: 55,
                             height: 55,
@@ -195,6 +198,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                   )
                                 : const SizedBox(),
                           ),
+
+                          // Middle: Name & Date
                           title: Text(
                             item['name'] ?? 'Unknown Product',
                             style: GoogleFonts.poppins(
@@ -215,6 +220,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                           ),
+
+                          // Right Side: Status Icon
                           trailing: Icon(
                             statusIcon,
                             color: statusColor,
