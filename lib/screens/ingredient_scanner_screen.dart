@@ -2,7 +2,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/dynamic_rule_service.dart';
+import '../models/scan_result.dart';
+import 'result_screen.dart';
 
 class IngredientScannerScreen extends StatefulWidget {
   final String scannedBarcode;
@@ -16,8 +19,17 @@ class IngredientScannerScreen extends StatefulWidget {
 
 class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
   bool _isProcessing = false;
+  bool _isSaving = false;
   Map<String, dynamic>? _extractedData;
   final ImagePicker _picker = ImagePicker();
+  
+  final TextEditingController _nameController = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
 
   Future<void> _scanLabel() async {
     try {
@@ -55,13 +67,90 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
     }
   }
 
+  // Saves to Firebase and Navigates to ResultScreen
+  Future<void> _saveToDatabase() async {
+    if (_nameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please enter the Product Name!"),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final String productName = _nameController.text.trim();
+      final List<dynamic> ingredientsList = _extractedData?['ingredients'] ?? [];
+      
+      // Save to Firestore under the 'Products' collection
+      await FirebaseFirestore.instance
+          .collection('Products')
+          .doc(widget.scannedBarcode)
+          .set({
+        'name': productName,
+        'barcode': widget.scannedBarcode,
+        'ingredients': ingredientsList,
+        'nutrition': _extractedData?['nutrition'] ?? {},
+        'is_crowdsourced': true,
+        'created_at': FieldValue.serverTimestamp(),
+      });
+
+      if (mounted) {
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Product added to global database! 🎉"),
+            backgroundColor: Colors.green,
+          ),
+        );
+        
+        // 2. Evaluate the new ingredients against the user's profile
+        // TODO: Plug in your actual evaluation logic here using the ingredientsList!
+        // For now, we will assume it is safe just to show the UI working.
+        bool isProductSafe = true; 
+        List<String> productWarnings = []; 
+
+        // 3. Construct the new ScanResult
+        final newScanResult = ScanResult(
+          productName: productName,
+          imageUrl: null, 
+          isSafe: isProductSafe,
+          isMissingData: false, 
+          warnings: productWarnings,
+          alternatives: [], unknownConditions: [], 
+        );
+
+        // 4. Navigate straight to the Result Screen
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ResultScreen(result: newScanResult),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Failed to save: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         title: Text(
-          "Scan Ingredients",
+          "Add Missing Product",
           style: GoogleFonts.poppins(color: Colors.white),
         ),
         backgroundColor: Colors.transparent,
@@ -81,53 +170,56 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
                 ],
               )
             : _extractedData != null
-            ? _buildResultView()
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.document_scanner,
-                    size: 80,
-                    color: Colors.white54,
-                  ),
-                  const SizedBox(height: 20),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 40),
-                    child: Text(
-                      "Take a clear photo of the Ingredients list and Nutritional table.",
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.poppins(
-                        color: Colors.white70,
-                        fontSize: 16,
+                ? _buildResultView()
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.document_scanner,
+                        size: 80,
+                        color: Colors.white54,
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-                  ElevatedButton.icon(
-                    onPressed: _scanLabel,
-                    icon: const Icon(Icons.camera_alt, color: Colors.black),
-                    label: Text(
-                      "Open Camera",
-                      style: GoogleFonts.poppins(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
+                      const SizedBox(height: 20),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 40),
+                        child: Text(
+                          "Take a clear photo of the Ingredients list and Nutritional table.",
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.poppins(
+                            color: Colors.white70,
+                            fontSize: 16,
+                          ),
+                        ),
                       ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF8CC63F),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 30,
-                        vertical: 15,
+                      const SizedBox(height: 40),
+                      ElevatedButton.icon(
+                        onPressed: _scanLabel,
+                        icon: const Icon(Icons.camera_alt, color: Colors.black),
+                        label: Text(
+                          "Open Camera",
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF8CC63F),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 30,
+                            vertical: 15,
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
-              ),
       ),
     );
   }
 
   Widget _buildResultView() {
+    final ingredients = List<String>.from(_extractedData?['ingredients'] ?? []);
+    final nutrition = Map<String, dynamic>.from(_extractedData?['nutrition'] ?? {});
+
     return Padding(
       padding: const EdgeInsets.all(20.0),
       child: Column(
@@ -142,30 +234,124 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
             ),
           ),
           const SizedBox(height: 20),
+          
+          // --- Product Name Input ---
+          TextField(
+            controller: _nameController,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: "What is the product's name?",
+              labelStyle: const TextStyle(color: Colors.white54),
+              enabledBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Colors.white24),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Color(0xFF8CC63F)),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              prefixIcon: const Icon(Icons.fastfood, color: Colors.white54),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // --- Extracted Data Preview ---
           Expanded(
             child: SingleChildScrollView(
-              child: Text(
-                _extractedData.toString(),
-                style: GoogleFonts.poppins(color: Colors.white70),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Ingredients Found:",
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: ingredients
+                        .map((ing) => Chip(
+                              label: Text(
+                                ing,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              backgroundColor: Colors.white70,
+                              padding: EdgeInsets.zero,
+                            ))
+                        .toList(),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    "Nutrition Found:",
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  ...nutrition.entries.map((e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              e.key.toUpperCase(),
+                              style: GoogleFonts.poppins(
+                                color: Colors.white54,
+                              ),
+                            ),
+                            Text(
+                              e.value.toString(),
+                              style: GoogleFonts.poppins(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )),
+                ],
               ),
             ),
           ),
+          
+          // --- Save Button ---
           SizedBox(
             width: double.infinity,
+            height: 55,
             child: ElevatedButton(
-              onPressed: () {
-                // TODO: Save this data to Firestore!
-              },
+              onPressed: _isSaving ? null : _saveToDatabase,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF8CC63F),
-              ),
-              child: Text(
-                "Looks Good - Continue",
-                style: GoogleFonts.poppins(
-                  color: Colors.black,
-                  fontWeight: FontWeight.bold,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
                 ),
               ),
+              child: _isSaving
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.black,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : Text(
+                      "Save to Database",
+                      style: GoogleFonts.poppins(
+                        color: Colors.black,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
             ),
           ),
         ],
