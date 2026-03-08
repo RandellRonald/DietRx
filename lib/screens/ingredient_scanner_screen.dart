@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/dynamic_rule_service.dart';
 import 'result_screen.dart';
 import '../services/scan_service.dart';
+import '../services/database_helper.dart';
 
 class IngredientScannerScreen extends StatefulWidget {
   final String scannedBarcode;
@@ -21,9 +22,32 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
   bool _isProcessing = false;
   bool _isSaving = false;
   Map<String, dynamic>? _extractedData;
+  Map<String, dynamic>? _localProductData;
   final ImagePicker _picker = ImagePicker();
 
   final TextEditingController _nameController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchExistingLocalData();
+  }
+
+  Future<void> _fetchExistingLocalData() async {
+    try {
+      final data = await DatabaseHelper().getProduct(widget.scannedBarcode);
+      if (data != null && mounted) {
+        setState(() {
+          _localProductData = data;
+          if (data['name'] != null && data['name'].toString().isNotEmpty) {
+            _nameController.text = data['name'];
+          }
+        });
+      }
+    } catch (e) {
+      print("Error fetching local data: $e");
+    }
+  }
 
   @override
   void dispose() {
@@ -33,7 +57,6 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
 
   Future<void> _scanLabel() async {
     try {
-      // 1. Open Camera
       final XFile? image = await _picker.pickImage(source: ImageSource.camera);
       if (image == null) return;
 
@@ -42,12 +65,10 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
         _extractedData = null;
       });
 
-      // 2. Send to our API
       final data = await DynamicRuleService.analyzeProductLabel(
         File(image.path),
       );
 
-      // 3. Update UI
       if (mounted) {
         setState(() {
           _extractedData = data;
@@ -67,7 +88,6 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
     }
   }
 
-  // Saves to Firebase and Navigates to ResultScreen
   Future<void> _saveToDatabase() async {
     if (_nameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -86,25 +106,33 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
       final List<dynamic> ingredientsList =
           _extractedData?['ingredients'] ?? [];
 
-      // 🚀 1. Save the new 'category' field to Firestore
+      // MERGE LOGIC: Combine API data with existing SQLite data!
+      Map<String, dynamic> firestoreData = {
+        'name': productName,
+        'barcode': widget.scannedBarcode,
+        'ingredients': ingredientsList,
+        'nutrition': _extractedData?['nutrition'] ?? {},
+        'category':
+            _extractedData?['category'] ??
+            _localProductData?['categories'] ??
+            "Unknown",
+        'image_url': _localProductData?['image_url'],
+        'nutriscore': _localProductData?['nutriscore'],
+        'nova_group': _localProductData?['nova_group'],
+        'labels': _localProductData?['labels'],
+        'is_crowdsourced': true,
+        'created_at': FieldValue.serverTimestamp(),
+      };
+
       await FirebaseFirestore.instance
           .collection('Products')
           .doc(widget.scannedBarcode)
-          .set({
-            'name': productName,
-            'barcode': widget.scannedBarcode,
-            'ingredients': ingredientsList,
-            'nutrition': _extractedData?['nutrition'] ?? {},
-            'category':
-                _extractedData?['category'] ?? "Unknown", // Added category!
-            'is_crowdsourced': true,
-            'created_at': FieldValue.serverTimestamp(),
-          });
+          .set(firestoreData);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Product added! Evaluating your profile... 🔍"),
+            content: Text("Product added"),
             backgroundColor: Colors.green,
           ),
         );
@@ -117,11 +145,12 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
         setState(() => _isSaving = false);
 
         if (newScanResult != null && mounted) {
-          Navigator.pushReplacement(
+          Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
               builder: (context) => ResultScreen(result: newScanResult),
             ),
+            (route) => route.isFirst,
           );
         } else if (mounted) {
           Navigator.pop(context);
@@ -232,8 +261,6 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
             ),
           ),
           const SizedBox(height: 20),
-
-          // --- Product Name Input ---
           TextField(
             controller: _nameController,
             style: const TextStyle(color: Colors.white),
@@ -252,8 +279,6 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
             ),
           ),
           const SizedBox(height: 20),
-
-          // --- Extracted Data Preview ---
           Expanded(
             child: SingleChildScrollView(
               child: Column(
@@ -322,8 +347,6 @@ class _IngredientScannerScreenState extends State<IngredientScannerScreen> {
               ),
             ),
           ),
-
-          // --- Save Button ---
           SizedBox(
             width: double.infinity,
             height: 55,

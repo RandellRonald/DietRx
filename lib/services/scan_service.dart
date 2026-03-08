@@ -8,65 +8,66 @@ class ScanService {
   final DatabaseHelper _dbHelper = DatabaseHelper();
 
   Future<ScanResult?> processBarcode(String barcode) async {
-    // A. Fetch Product from SQLite
-    Map<String, dynamic>? product = await _dbHelper.getProduct(barcode);
+    Map<String, dynamic>? product;
 
-    // B. If not in SQLite, check Firebase database!
-    if (product == null) {
-      try {
-        var doc = await FirebaseFirestore.instance
-            .collection('Products')
-            .doc(barcode)
-            .get();
+    // 🚀 1. CHECK FIREBASE FIRST
+    try {
+      var doc = await FirebaseFirestore.instance
+          .collection('Products')
+          .doc(barcode)
+          .get();
 
-        if (doc.exists) {
-          var data = doc.data()!;
+      if (doc.exists) {
+        var data = doc.data()!;
 
-          String ingredientsStr = "";
-          if (data['ingredients'] is List) {
-            ingredientsStr = (data['ingredients'] as List).join(", ");
-          } else {
-            ingredientsStr = data['ingredients'].toString();
-          }
-
-          double? parseNutrient(String key) {
-            if (data['nutrition'] == null) return null;
-            var val = data['nutrition'][key];
-            if (val == null || val.toString().toLowerCase() == 'not listed')
-              return null;
-            // Keeps only numbers and decimals
-            String numStr = val.toString().replaceAll(RegExp(r'[^0-9.]'), '');
-            return double.tryParse(numStr);
-          }
-
-          product = {
-            'name': data['name'],
-            'ingredients': ingredientsStr,
-            'image_url': null,
-            'nutriscore': null,
-            'nova_group': null,
-            'categories': data['category'],
-            'labels': null,
-            'sugars_100g': parseNutrient('sugar'),
-            'salt_100g': null,
-            'fat_100g': parseNutrient('fat'),
-            'saturated_fat_100g': parseNutrient('saturated_fat'),
-            'calories_100g': parseNutrient('calories'),
-            'carbohydrates_100g':
-                parseNutrient('carbohydrates') ?? parseNutrient('carbs'),
-            'sodium_100g': parseNutrient('sodium'),
-            'cholesterol_100g': parseNutrient('cholesterol'),
-            'trans_fat_100g': parseNutrient('trans_fat'),
-          };
+        String ingredientsStr = "";
+        if (data['ingredients'] is List) {
+          ingredientsStr = (data['ingredients'] as List).join(", ");
+        } else {
+          ingredientsStr = data['ingredients'].toString();
         }
-      } catch (e) {
-        print("Error fetching from Firebase: $e");
+
+        double? parseNutrient(String key) {
+          if (data['nutrition'] == null) return null;
+          var val = data['nutrition'][key];
+          if (val == null || val.toString().toLowerCase() == 'not listed')
+            return null;
+          String numStr = val.toString().replaceAll(RegExp(r'[^0-9.]'), '');
+          return double.tryParse(numStr);
+        }
+
+        product = {
+          'name': data['name'],
+          'ingredients': ingredientsStr,
+          'image_url':
+              data['image_url'],
+          'nutriscore': data['nutriscore'],
+          'nova_group': data['nova_group'],
+          'categories': data['category'] ?? data['categories'],
+          'labels': data['labels'],
+          'sugars_100g': parseNutrient('sugar'),
+          'salt_100g': null,
+          'fat_100g': parseNutrient('fat'),
+          'saturated_fat_100g': parseNutrient('saturated_fat'),
+          'calories_100g': parseNutrient('calories'),
+          'carbohydrates_100g':
+              parseNutrient('carbohydrates') ?? parseNutrient('carbs'),
+          'sodium_100g': parseNutrient('sodium'),
+          'cholesterol_100g': parseNutrient('cholesterol'),
+          'trans_fat_100g': parseNutrient('trans_fat'),
+        };
       }
+    } catch (e) {
+      print("Error fetching from Firebase: $e");
     }
 
+    // 🚀 2. CHECKLOCAL SQLITE 
+    product ??= await _dbHelper.getProduct(barcode);
+
+    // 3. If neither database has it, return null.
     if (product == null) return null;
 
-    // D. Parse Data
+    // --- D. Parse Data ---
     String name = product['name'] ?? "Unknown Product";
     String ingredients = (product['ingredients'] ?? "").toLowerCase();
     String? imageUrl = product['image_url'];
@@ -75,7 +76,6 @@ class ScanService {
     String? categories = product['categories'];
     String? labels = product['labels'];
 
-    // Map nutrients
     Map<String, double?> nutrients = {
       'sugar_100g': product['sugars_100g'] as double?,
       'salt_100g': product['salt_100g'] as double?,
@@ -192,7 +192,6 @@ class ScanService {
       if (combinedRules.containsKey(condition)) {
         final rule = combinedRules[condition]!;
 
-        // 1. Check Nutrient Limits
         rule.nutrientLimits.forEach((nutrientKey, limit) {
           double? val = nutrients[nutrientKey];
 
@@ -201,7 +200,6 @@ class ScanService {
           }
         });
 
-        // 2. Check Ingredients (Text)
         for (var forbidden in rule.forbiddenKeywords) {
           if (ingredients.contains(forbidden.toLowerCase())) {
             warnings.add("$condition: Contains '$forbidden'");
@@ -233,7 +231,6 @@ class ScanService {
       }
     }
 
-    // 3. Nova Warning
     if (novaGroup == 4) {
       warnings.add("Ultra-Processed Food (Nova 4)");
     }
